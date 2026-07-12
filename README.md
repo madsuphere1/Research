@@ -22,7 +22,18 @@ python -m pipeline.run --provider coinbase --symbol BTC-USD --timeframe 1h --yea
 python -m pipeline.run --provider bitstamp --symbol ETH-USD --timeframe 1h --years 2
 python -m pipeline.run --provider histdata --symbol XAUUSD  --timeframe 15m --years 2
 python -m pipeline.run --provider csv --symbol path/to/mt5_export.csv --timeframe 1h
+
+# account replay: what would $X have become over period P at leverage L?
+python -m pipeline.simulate --provider coinbase --symbol SOL-USD \
+    --balance 6000 --leverage 1 --days 61 --test-name test6 --prompt "..."
+# which candle size is this instrument predictable on?
+python -m pipeline.scan --provider histdata --symbol XAUUSD --test-name scan1
+# what does the live bar match right now (regime-conditional accuracy)?
+python -m pipeline.match --provider coinbase --symbol BTC-USD --timeframe 1h
 ```
+
+Test protocol, honesty invariants and the ledger of user tests 1–7 are in
+[`TESTING.md`](TESTING.md); agent operating rules in [`CLAUDE.md`](CLAUDE.md).
 
 Outputs land in `outputs/<provider>_<symbol>_<tf>/`:
 `report.md`, `window_research.csv`, `oos_predictions.parquet`,

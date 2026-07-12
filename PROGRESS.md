@@ -13,6 +13,9 @@
 | 7 — pattern benchmark ≥95%/pattern | ✅ done | `reports/PATTERN_BENCH.md`: mean 98.3%, min 95%, regression-tested |
 | 8 — time-series models (AR + causal HMM) | ✅ done | `tests/test_timeseries.py` (incl. causality tests) |
 | 9 — RL agent + recursive refit | ✅ done | `tests/test_rl.py`; integrated in `pipeline/run.py` steps 3b/4b |
+| 10 — account test harness + logs | ✅ done | `pipeline/simulate.py`, `tests/test_simulate.py`, `logs/` |
+| 11 — live pattern match + timeframe scan | ✅ done | `pipeline/match.py`, `pipeline/scan.py`, `tests/test_match.py` |
+| 12 — user test ledger (tests 1–7) | ✅ done | `TESTING.md` + `logs/test_runs.jsonl` |
 
 Key findings from the two-exchange runs are in
 `reports/RESEARCH_SUMMARY.md`: market structure dominates on both

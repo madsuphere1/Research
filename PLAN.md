@@ -26,6 +26,9 @@ walk-forward, never trust in-sample results.**
 | 7 | Pattern-recognition benchmark: every classical detector ≥95% accuracy on labeled textbook shapes (recognition ≠ prediction) | tests/test_pattern_bench.py |
 | 8 | Time-series models: rolling AR forecasts + forward-filtered (causal) HMM regime features | tests/test_timeseries.py |
 | 9 | RL signal agent (contextual Q; reward = net R, punishment = losses; replay until Q-table stable) + recursive error-boosted refit with validation early stop | tests/test_rl.py |
+| 10 | Account-level test harness: dollar replay of OOS decisions for any balance/leverage/period, persistent test logs | tests/test_simulate.py, logs/ |
+| 11 | Live pattern-match engine (regime-conditional per-bar pattern accuracy) + bounded multi-timeframe scan | tests/test_match.py |
+| 12 | User test ledger and agent guide | TESTING.md, CLAUDE.md |
 
 ## Design rules
 
