@@ -1,6 +1,8 @@
 window,bars,wf_auc,n_kept,kept_families
-lb6m_off0m,4339,0.5112,29,"mom,ms,ses,smc,sr,trend,vlt,vol"
-lb6m_off6m,4411,0.5823,39,"mom,ms,ses,smc,sr,trend,vlt,vol"
-lb6m_off12m,4344,0.51,58,"cdl,mom,ms,pat,ses,smc,sr,trend,vlt,vol"
-lb12m_off0m,8750,0.536,58,"cdl,mom,ms,pat,ses,smc,sr,trend,vlt,vol"
-lb12m_off6m,8755,0.534,62,"mom,ms,pat,ses,smc,sr,trend,vlt,vol"
+lb6m_off0m,4339,0.5158,54,"cdl,mom,ms,ses,smc,sr,trend,ts,vlt,vol"
+lb6m_off6m,4411,0.594,37,"mom,ms,ses,smc,sr,trend,ts,vlt,vol"
+lb6m_off12m,4344,0.4752,38,"cdl,mom,ms,ses,smc,sr,trend,ts,vlt,vol"
+lb12m_off0m,8750,0.5383,61,"cdl,mom,ms,ses,smc,sr,trend,ts,vlt,vol"
+lb12m_off6m,8755,0.5278,74,"cdl,mom,ms,ses,smc,sr,trend,ts,vlt,vol"
+lb12m_off12m,8760,0.5406,74,"cdl,mom,ms,pat,ses,smc,sr,trend,ts,vlt,vol"
+lb24m_off0m,17510,0.5083,88,"cdl,mom,ms,pat,ses,smc,sr,trend,ts,vlt,vol"

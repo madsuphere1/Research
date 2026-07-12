@@ -1,19 +1,42 @@
 # Research summary — two-exchange pipeline validation (2026-07-12)
 
-The full pipeline (data → window permutations → 143-column feature matrix →
-shadow relevance → purged walk-forward LightGBM → threshold selection →
-held-out cost-aware backtest → MQL5 EA generation) was run end-to-end on
-two different exchanges:
+The full pipeline (data → window permutations → 150-column feature matrix
+incl. time-series models → shadow relevance → purged walk-forward LightGBM
+→ recursive error-boosted refit → threshold + RL policies → held-out
+cost-aware backtest → MQL5 EA generation) was run end-to-end on two
+different exchanges (updated after phases 7–9):
 
 | | Coinbase BTC-USD 1h | Bitstamp ETH-USD 1h |
 |---|---|---|
 | Bars (2y) | 17,510 | 17,521 |
-| Walk-forward AUC (full window) | 0.500 | 0.525 |
-| AUC by window (6m/12m permutations) | 0.510 – 0.582 | 0.488 – 0.592 |
-| Features kept by relevance | 63 / 143 | 73 / 143 |
-| Held-out backtest net R/trade | −0.065 | −0.025 |
-| Backtest p-value | 0.90 | 0.69 |
+| Walk-forward AUC (full window) | 0.509 | 0.547 |
+| AUC by window (6m/12m/24m permutations) | 0.475 – 0.594 | 0.497 – 0.579 |
+| Features kept by relevance | 88 / 150 | 82 / 150 |
+| Held-out backtest net R/trade (threshold policy) | −0.047 | −0.015 |
+| Held-out net R/trade (RL agent, same half) | **+0.025** | −0.004 |
+| RL backtest p-value | 0.28 | 0.56 |
 | Distilled (MQL5) walk-forward AUC | 0.517 | 0.534 |
+
+## Phase 7–9 additions
+
+* **Pattern recognition ≥95% per pattern** (`reports/PATTERN_BENCH.md`):
+  detectors tuned from a 60.8% baseline to mean 98.3% accuracy on labeled
+  textbook shapes, regression-guarded. Recognition ≠ prediction — the
+  predictive worth of each pattern is still measured only out-of-sample.
+* **Time-series models** (rolling AR forecasts, forward-filtered HMM
+  regimes) joined the feature matrix and lifted ETH's walk-forward AUC
+  from 0.525 → 0.547; BTC 0.500 → 0.509.
+* **Recursive error-boosted refit**: retrains with mistakes up-weighted,
+  keeps the best *validation* round (BTC kept round 4 of 7; ETH stopped
+  immediately — extra recursion was hurting). Training error is never the
+  stop criterion, because "loop until the prediction is true" on the past
+  is just memorisation.
+* **RL agent** (contextual Q; reward = realised net R, losses punish):
+  Q-tables converged on all folds. On the identical held-out half it beat
+  the threshold policy on both instruments and turned BTC positive
+  (+0.025 R/trade, PF 1.045) — but p = 0.28 means this is **not yet
+  statistically distinguishable from luck**. It is a promising lever, not
+  a proven edge.
 
 ## What the research found
 
@@ -33,13 +56,14 @@ two different exchanges:
    lower on the most recent 6 months. This is why the pipeline re-runs
    relevance per instrument and per window instead of assuming one fixed
    feature set.
-4. **No tradeable edge after costs on these two crypto pairs at 1h.**
-   Predictive signal above chance exists in several windows, but the
-   held-out, cost-adjusted expectancy is negative and statistically
-   indistinguishable from noise (p ≫ 0.05). This mirrors the sister study
-   `../Claude-researcg` on XAUUSD 15m (real but small signal; dies at
-   retail costs). The generated EAs carry these numbers in their headers
-   deliberately: **they are research artifacts, not money printers.**
+4. **No *proven* tradeable edge after costs on these two crypto pairs at
+   1h.** Predictive signal above chance exists (ETH walk-forward AUC 0.547
+   with 5/5 folds above 0.5), and the RL layer improved expectancy on both
+   instruments, but no configuration yet clears statistical significance
+   net of costs. This mirrors the sister study `../Claude-researcg` on
+   XAUUSD 15m (real but small signal; dies at retail costs). The generated
+   EAs carry these numbers in their headers deliberately: **they are
+   research artifacts, not money printers.**
 
 ## Where to go next
 
