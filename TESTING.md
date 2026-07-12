@@ -45,6 +45,7 @@ always included; ties resolve SL-first; entries fill at next bar open.
 | 6 | "6k two months ago — now?" | $6k, 61d, SOL 1h, 1:1 | **$7,300 (+21.7%)** vs $4,912 B&H (−18%) |
 | 7 | "Gold 2 months, which candle size, 6k at 1:10" | XAUUSD scan + $6k 6h sim | 6h most predictive (AUC 0.550, 4/4) but no TF beats costs; sim $6,073 (+1.2%) vs $5,238 B&H |
 | 8 | "Why didn't you stop the trade / recursively correct the prediction?" | Test 7 rerun, live correction ON | Threshold $6,097 (+1.6%, max DD 5.6%→3.2%); **RL −8.7% → +0.8%** — breaker tripped once, skipped 70 signals |
+| 9 | "Try SOL with this approach" | Test 6 rerun, live correction ON | Split verdict: **RL +7.4% → +20.1%** ($7,206, best run yet) but threshold +21.7% → **−19.0%** — thresholds calibrated on the static model's probabilities don't fit the retrained model's distribution (known issue below); breaker capped the damage (5 trips, 376 signals skipped) |
 
 ## What the ledger shows so far
 
@@ -73,3 +74,10 @@ always included; ties resolve SL-first; entries fill at next bar open.
   rolling window is essential — an expanding window never unlearns a
   flipped regime, proven by `tests/test_adaptive.py`). Both defaults-on;
   every test trains a fresh model, stated in each log record.
+* Test 9 exposed a calibration mismatch: CALL/PUT thresholds are fitted on
+  the STATIC pre-window model's probability distribution but applied to
+  the retrained models' probabilities, whose distribution shifts.
+  Coarse-binned RL states are robust to this (RL improved on both gold and
+  SOL); fixed thresholds are not (SOL threshold policy flipped from +21.7%
+  to −19.0%). Open fix: generate pre-window predictions with the same
+  rolling-retrain procedure and fit thresholds on those.
