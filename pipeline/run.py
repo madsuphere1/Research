@@ -31,7 +31,7 @@ import pandas as pd
 from .backtest import run_backtest
 from .data import load_ohlcv, slice_window, window_permutations
 from .data.windows import span_months
-from .features.build import build_features_cached as build_features
+from .features import build_features
 from .labeling import triple_barrier
 from .model import fit_final_model, walk_forward
 from .mql5.generator import distill, render_ea
