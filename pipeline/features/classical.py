@@ -1,9 +1,11 @@
 """Classical chart patterns from the confirmed swing sequence
-(MARKET_RULES.md §4; approach cross-checked with external/TradingPatternScanner).
+(MARKET_RULES.md §4; cross-checked with external/TradingPatternScanner).
 
-Patterns are detected on the last 5-7 confirmed swing points, so detection
-is causal (a pattern exists only once its final swing is confirmed).
-Signed one-hots: +1 bullish implication, -1 bearish.
+Detection is causal: a pattern can only fire on the bar where its final
+swing is confirmed. Rules are prominence-based (extremes must stand out
+from intervening swings by multiples of ATR) — tuned against
+pipeline/bench/pattern_bench.py to >=95% accuracy on textbook shapes while
+staying silent on random walks. Signed one-hots: +1 bullish, -1 bearish.
 """
 
 from __future__ import annotations
@@ -14,14 +16,23 @@ import pandas as pd
 from .market_structure import find_swings
 from .trend import atr
 
+# tolerances in ATR units (tuned on the benchmark; see reports/PATTERN_BENCH.md)
+EQ_TOL = 1.5        # "equal" extremes differ by less than this
+FLAT_TOL = 1.4      # "flat" triangle side tolerance
+PROM = 4.0          # prominence: extreme vs intervening counter-swing
+HEAD_MIN = 1.2      # head must exceed shoulders by this
+SLOPE_MIN = 2.0     # rising/falling trendline: min move between touches
+HEIGHT_MIN = 5.0    # min triangle/wedge/channel height (widest point)
+FLAG_LEG = 8.0      # impulse leg size for flags
 
-def _swing_sequence(df: pd.DataFrame, k: int):
-    """Chronological (bar_position, price, kind) of confirmed swings; kind +1 high / -1 low."""
+
+def _swing_events(df: pd.DataFrame, k: int):
+    """Chronological confirmed swings: (confirm_pos, swing_pos, price, kind)."""
     sw = find_swings(df["high"], df["low"], k)
+    pos = {ts: p for p, ts in enumerate(df.index)}
+    events = []
     hi = sw["swing_hi_i"].where(sw["swing_hi_i"].diff().ne(0)).dropna()
     lo = sw["swing_lo_i"].where(sw["swing_lo_i"].diff().ne(0)).dropna()
-    events = []  # (confirm_pos, swing_pos, price, kind)
-    pos = {ts: p for p, ts in enumerate(df.index)}
     for ts, sp in hi.items():
         events.append((pos[ts], int(sp), df["high"].values[int(sp)], 1))
     for ts, sp in lo.items():
@@ -30,79 +41,121 @@ def _swing_sequence(df: pd.DataFrame, k: int):
     return events
 
 
-def compute(df: pd.DataFrame, k: int = 5, tol: float = 0.5) -> pd.DataFrame:
+def _between(seq, p1, p2, kind):
+    """Extreme price of `kind` swings strictly between swing positions p1<p2."""
+    vals = [px for sp, px, kd in seq if p1 < sp < p2 and kd == kind]
+    if not vals:
+        return None
+    return min(vals) if kind == -1 else max(vals)
+
+
+def compute(df: pd.DataFrame, k: int = 5) -> pd.DataFrame:
     n = len(df)
     a = atr(df).values
-    events = _swing_sequence(df, k)
+    events = _swing_events(df, k)
 
-    cols = {
-        "pat_double_top": np.zeros(n), "pat_double_bottom": np.zeros(n),
-        "pat_triple_top": np.zeros(n), "pat_triple_bottom": np.zeros(n),
-        "pat_hs": np.zeros(n), "pat_inv_hs": np.zeros(n),
-        "pat_asc_triangle": np.zeros(n), "pat_desc_triangle": np.zeros(n),
-        "pat_sym_triangle": np.zeros(n), "pat_rising_wedge": np.zeros(n),
-        "pat_falling_wedge": np.zeros(n), "pat_channel": np.zeros(n),
-        "pat_flag": np.zeros(n),
-    }
+    names = ["pat_double_top", "pat_double_bottom", "pat_triple_top",
+             "pat_triple_bottom", "pat_hs", "pat_inv_hs", "pat_asc_triangle",
+             "pat_desc_triangle", "pat_sym_triangle", "pat_rising_wedge",
+             "pat_falling_wedge", "pat_channel", "pat_flag"]
+    cols = {m: np.zeros(n) for m in names}
 
     hist: list[tuple[int, float, int]] = []  # (swing_pos, price, kind)
     ei = 0
     for i in range(n):
+        fresh = False
         while ei < len(events) and events[ei][0] <= i:
             hist.append(events[ei][1:])
+            fresh = True
             ei += 1
-        if len(hist) < 5 or np.isnan(a[i]) or a[i] == 0:
+        # fire only on the bar where a new swing confirms (kills persistence FPs)
+        if not fresh or len(hist) < 4 or np.isnan(a[i]) or a[i] == 0:
             continue
-        tol_px = tol * a[i]
-        highs = [(p, px) for p, px, kd in hist[-8:] if kd == 1]
-        lows = [(p, px) for p, px, kd in hist[-8:] if kd == -1]
+        atr_i = a[i]
+        seq = hist[-10:]
+        highs = [(sp, px) for sp, px, kd in seq if kd == 1]
+        lows = [(sp, px) for sp, px, kd in seq if kd == -1]
         if len(highs) < 2 or len(lows) < 2:
             continue
-        h_px = [px for _, px in highs]
-        l_px = [px for _, px in lows]
 
-        # double / triple top-bottom
-        if abs(h_px[-1] - h_px[-2]) < tol_px:
+        def eq(x, y, tol=EQ_TOL):
+            return abs(x - y) < tol * atr_i
+
+        # ---- double / triple top: near-equal prominent highs
+        (p1, h1), (p2, h2) = highs[-2], highs[-1]
+        trough = _between(seq, p1, p2, -1)
+        if trough is not None and eq(h1, h2) and min(h1, h2) - trough > PROM * atr_i:
             cols["pat_double_top"][i] = -1
-            if len(h_px) >= 3 and abs(h_px[-2] - h_px[-3]) < tol_px:
-                cols["pat_triple_top"][i] = -1
-        if abs(l_px[-1] - l_px[-2]) < tol_px:
-            cols["pat_double_bottom"][i] = 1
-            if len(l_px) >= 3 and abs(l_px[-2] - l_px[-3]) < tol_px:
-                cols["pat_triple_bottom"][i] = 1
+            if len(highs) >= 3:
+                p0, h0 = highs[-3]
+                t0 = _between(seq, p0, p1, -1)
+                if t0 is not None and eq(h0, h1) and min(h0, h1) - t0 > PROM * atr_i:
+                    cols["pat_triple_top"][i] = -1
 
-        # head & shoulders: middle high above two similar shoulders
-        if len(h_px) >= 3:
-            ls, hd, rs = h_px[-3], h_px[-2], h_px[-1]
-            if hd > ls + tol_px and hd > rs + tol_px and abs(ls - rs) < 2 * tol_px:
+        # ---- double / triple bottom
+        (q1, l1), (q2, l2) = lows[-2], lows[-1]
+        crest = _between(seq, q1, q2, 1)
+        if crest is not None and eq(l1, l2) and crest - max(l1, l2) > PROM * atr_i:
+            cols["pat_double_bottom"][i] = 1
+            if len(lows) >= 3:
+                q0, l0 = lows[-3]
+                c0 = _between(seq, q0, q1, 1)
+                if c0 is not None and eq(l0, l1) and c0 - max(l0, l1) > PROM * atr_i:
+                    cols["pat_triple_bottom"][i] = 1
+
+        # ---- head & shoulders: prominent head, near-equal shoulders, real neckline
+        if len(highs) >= 3:
+            (pl, ls), (ph, hd), (pr, rs) = highs[-3], highs[-2], highs[-1]
+            n1 = _between(seq, pl, ph, -1)
+            n2 = _between(seq, ph, pr, -1)
+            if (n1 is not None and n2 is not None
+                    and hd - max(ls, rs) > HEAD_MIN * atr_i
+                    and eq(ls, rs, 2 * EQ_TOL)
+                    and min(ls, rs) - max(n1, n2) > PROM * atr_i):
                 cols["pat_hs"][i] = -1
-        if len(l_px) >= 3:
-            ls, hd, rs = l_px[-3], l_px[-2], l_px[-1]
-            if hd < ls - tol_px and hd < rs - tol_px and abs(ls - rs) < 2 * tol_px:
+        if len(lows) >= 3:
+            (ql, ls), (qh, hd), (qr, rs) = lows[-3], lows[-2], lows[-1]
+            n1 = _between(seq, ql, qh, 1)
+            n2 = _between(seq, qh, qr, 1)
+            if (n1 is not None and n2 is not None
+                    and min(ls, rs) - hd > HEAD_MIN * atr_i
+                    and eq(ls, rs, 2 * EQ_TOL)
+                    and min(n1, n2) - max(ls, rs) > PROM * atr_i):
                 cols["pat_inv_hs"][i] = 1
 
-        # trendline slopes over last 3 highs / lows (ATR units per swing)
-        if len(h_px) >= 3 and len(l_px) >= 3:
-            hs_ = (h_px[-1] - h_px[-3]) / (2 * a[i])
-            lsl = (l_px[-1] - l_px[-3]) / (2 * a[i])
-            flat_h, flat_l = abs(hs_) < tol, abs(lsl) < tol
-            if flat_h and lsl > tol:
-                cols["pat_asc_triangle"][i] = 1
-            elif flat_l and hs_ < -tol:
-                cols["pat_desc_triangle"][i] = -1
-            elif hs_ < -tol and lsl > tol:
-                cols["pat_sym_triangle"][i] = np.sign(hs_ + lsl)
-            elif hs_ > tol and lsl > tol:
-                cols["pat_rising_wedge" if hs_ < lsl else "pat_channel"][i] = -1 if hs_ < lsl else 1
-            elif hs_ < -tol and lsl < -tol:
-                cols["pat_falling_wedge" if hs_ > lsl else "pat_channel"][i] = 1 if hs_ > lsl else -1
+        # ---- triangles / wedges / channel: need 3 monotonic touches per side
+        if (len(highs) >= 3 and len(lows) >= 3
+                and max(px for _, px in highs[-3:]) - min(px for _, px in lows[-3:])
+                    > HEIGHT_MIN * atr_i):
+            h3 = [px for _, px in highs[-3:]]
+            l3 = [px for _, px in lows[-3:]]
+            flat_h = eq(h3[0], h3[2], FLAT_TOL) and eq(h3[0], h3[1], FLAT_TOL)
+            flat_l = eq(l3[0], l3[2], FLAT_TOL) and eq(l3[0], l3[1], FLAT_TOL)
+            rising_l = l3[2] - l3[1] > 0 and l3[1] - l3[0] > 0 and l3[2] - l3[0] > SLOPE_MIN * atr_i
+            falling_h = h3[2] - h3[1] < 0 and h3[1] - h3[0] < 0 and h3[0] - h3[2] > SLOPE_MIN * atr_i
+            rising_h = h3[2] - h3[1] > 0 and h3[1] - h3[0] > 0 and h3[2] - h3[0] > SLOPE_MIN * atr_i
+            falling_l = l3[2] - l3[1] < 0 and l3[1] - l3[0] < 0 and l3[0] - l3[2] > SLOPE_MIN * atr_i
 
-        # flag: strong prior leg + shallow counter-drift
-        leg = (hist[-1][1] - hist[-4][1]) / a[i]
-        drift = (h_px[-1] - h_px[-2] + l_px[-1] - l_px[-2]) / (2 * a[i])
-        if abs(leg) > 6 and abs(drift) < 1 and np.sign(drift) != np.sign(leg):
-            cols["pat_flag"][i] = np.sign(leg)
+            if flat_h and rising_l:
+                cols["pat_asc_triangle"][i] = 1
+            elif flat_l and falling_h:
+                cols["pat_desc_triangle"][i] = -1
+            elif falling_h and rising_l:
+                cols["pat_sym_triangle"][i] = 0.5  # direction unknown until break
+            elif rising_h and rising_l:
+                conv = (h3[2] - h3[0]) < (l3[2] - l3[0]) - 0.5 * atr_i
+                cols["pat_rising_wedge" if conv else "pat_channel"][i] = -1 if conv else 1
+            elif falling_h and falling_l:
+                conv = (h3[0] - h3[2]) < (l3[0] - l3[2]) - 0.5 * atr_i
+                cols["pat_falling_wedge" if conv else "pat_channel"][i] = 1 if conv else -1
+
+        # ---- flag: big impulse then shallow 2-swing drift against it
+        if len(seq) >= 4:
+            leg = (seq[-3][1] - seq[-4][1]) / atr_i
+            drift = (seq[-1][1] - seq[-3][1]) / atr_i
+            if abs(leg) > FLAG_LEG and abs(drift) < 0.35 * abs(leg) and np.sign(drift) != np.sign(leg):
+                cols["pat_flag"][i] = np.sign(leg)
 
     out = pd.DataFrame(cols, index=df.index)
-    # patterns stay "active" for a while after detection
+    # a detected pattern stays active for 2k bars for the model's benefit
     return out.replace(0.0, np.nan).ffill(limit=2 * k).fillna(0.0)
