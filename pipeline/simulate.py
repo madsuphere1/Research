@@ -263,13 +263,14 @@ def main(argv=None):
         print(f"      in-window retrains: {n_retrains} (every {retrain_every} bars)")
     sig_th = make_signals(df, sim_proba, cfg)
 
-    proba_combined = res.proba.copy()
+    proba_combined = pd.Series(np.nan, index=X.index)
+    proba_combined.loc[res.proba.index] = res.proba
     proba_combined.loc[sim_proba.index] = sim_proba
     regime = X["trend_regime"].reindex(proba_combined.index)
     volf = X["vlt_atr_pct"].reindex(proba_combined.index)
     states_all = build_states(proba_combined.fillna(0.5), regime, volf)
     rew = rewards_frame(lab["r_long"].reindex(states_all.index), args.rr, args.cost_r)
-    pre_mask = (states_all.index < sim_start) & res.proba.notna()
+    pre_mask = (states_all.index < sim_start) & res.proba.reindex(states_all.index).notna().values
     agent = QAgent(seed=0).fit(states_all[pre_mask].values,
                                rew[list(ACTIONS)][pre_mask].values)
     rl_actions = pd.Series(

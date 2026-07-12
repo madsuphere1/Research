@@ -44,6 +44,7 @@ always included; ties resolve SL-first; entries fill at next bar open.
 | 5 | "Any other exchange — Solana?" | SOL scan + match + full run | Best TF 1h; breakouts fail on SOL (fade); +0.054 R held-out, p=0.12; EA generated |
 | 6 | "6k two months ago — now?" | $6k, 61d, SOL 1h, 1:1 | **$7,300 (+21.7%)** vs $4,912 B&H (−18%) |
 | 7 | "Gold 2 months, which candle size, 6k at 1:10" | XAUUSD scan + $6k 6h sim | 6h most predictive (AUC 0.550, 4/4) but no TF beats costs; sim $6,073 (+1.2%) vs $5,238 B&H |
+| 8 | "Why didn't you stop the trade / recursively correct the prediction?" | Test 7 rerun, live correction ON | Threshold $6,097 (+1.6%, max DD 5.6%→3.2%); **RL −8.7% → +0.8%** — breaker tripped once, skipped 70 signals |
 
 ## What the ledger shows so far
 
@@ -65,3 +66,10 @@ always included; ties resolve SL-first; entries fill at next bar open.
 * Slow repeat runs → feature-matrix cache added, then **reverted at the
   user's request** ("don't bypass any step"); every run computes fresh.
 * Parallel runs slowed each other → tests now run one exchange at a time.
+* Test 7's bad gold trades ("why didn't you stop / correct?") → simulator
+  gained (a) a **circuit breaker** (pause after a −4R 10-trade streak,
+  cooldown, resume) and (b) **in-window rolling retraining**
+  (`adaptive_proba`: refit every N bars on the latest resolved bars; the
+  rolling window is essential — an expanding window never unlearns a
+  flipped regime, proven by `tests/test_adaptive.py`). Both defaults-on;
+  every test trains a fresh model, stated in each log record.
