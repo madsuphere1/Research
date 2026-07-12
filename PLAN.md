@@ -23,6 +23,9 @@ walk-forward, never trust in-sample results.**
 | 4 | Signal engine: CALL/PUT + ATR-based TP/SL + risk:reward; cost-aware backtest | tests/test_signal.py |
 | 5 | MQL5 generator: compilable `.mq5` EA parameterised by learned model output | tests/test_mql5.py |
 | 6 | End-to-end runs on ≥2 different exchanges + window-permutation research report | reports/ |
+| 7 | Pattern-recognition benchmark: every classical detector ≥95% accuracy on labeled textbook shapes (recognition ≠ prediction) | tests/test_pattern_bench.py |
+| 8 | Time-series models: rolling AR forecasts + forward-filtered (causal) HMM regime features | tests/test_timeseries.py |
+| 9 | RL signal agent (contextual Q; reward = net R, punishment = losses; replay until Q-table stable) + recursive error-boosted refit with validation early stop | tests/test_rl.py |
 
 ## Design rules
 

@@ -35,7 +35,10 @@ from .features import build_features
 from .labeling import triple_barrier
 from .model import fit_final_model, walk_forward
 from .mql5.generator import distill, render_ea
+from .recursive import recursive_refit
+from .rl import walk_forward_rl
 from .signal import SignalConfig, choose_thresholds, make_signals
+from .signal_actions import signals_from_actions
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -103,6 +106,11 @@ def main(argv=None):
     print(f"      walk-forward AUC {res.auc:.4f} (folds: {[round(a,3) for a in res.auc_by_fold]})")
     print(f"      kept {len(res.kept_features)} features, dropped {len(res.dropped_features)}")
 
+    print("[3b] recursive error-boosted refit (validation-early-stopped)")
+    y_bin = (lab["label"] == 1).astype(int)[lab["label"].notna()]
+    rec = recursive_refit(X.loc[y_bin.index, res.kept_features], y_bin, purge=args.horizon)
+    print(f"      val AUC per round {[round(h, 4) for h in rec.history]} -> kept round {rec.best_round}")
+
     print("[4/6] thresholds on first half of OOS; backtest on held-out second half")
     oos = res.proba.dropna()
     half = oos.index[len(oos) // 2]
@@ -115,6 +123,19 @@ def main(argv=None):
     signals = make_signals(df, eval_proba, cfg)
     bt = run_backtest(df, signals, horizon=args.horizon, cost_r=args.cost_r)
     print(f"      thresholds call>={call_th:.2f} put<={put_th:.2f} | {bt.summary()}")
+
+    print("[4b] RL agent (contextual Q, reward = net R) on the same held-out half")
+    regime = X["trend_regime"].reindex(res.proba.index)
+    volf = X["vlt_atr_pct"].reindex(res.proba.index)
+    rl_actions, rl_agents = walk_forward_rl(
+        res.proba, regime, volf, lab["r_long"], rr=args.rr, cost_r=args.cost_r,
+        purge=args.horizon,
+    )
+    rl_eval = rl_actions[rl_actions.index >= half]
+    bt_rl = run_backtest(df, signals_from_actions(df, rl_eval, cfg),
+                         horizon=args.horizon, cost_r=args.cost_r)
+    conv = [f"{a.epochs_run}ep{'*' if a.converged else ''}" for a in rl_agents]
+    print(f"      RL folds converged: {conv} | {bt_rl.summary()}")
 
     print("[5/6] distill + generate MQL5 EA")
     dm = distill(df, lab, full_proba=res.proba)
@@ -133,6 +154,7 @@ def main(argv=None):
     top = res.feature_importance.head(20) if res.feature_importance is not None else pd.Series(dtype=float)
     fam_imp = (res.feature_importance.groupby(group_of).sum().sort_values(ascending=False)
                if res.feature_importance is not None else pd.Series(dtype=float))
+    fam_dict = {k: int(v) for k, v in fam_imp.items()} if len(fam_imp) else "n/a"
     report = f"""# Pipeline run: {args.provider}:{args.symbol} {args.timeframe}
 
 Generated {datetime.now(timezone.utc):%Y-%m-%d %H:%M UTC}. Data: {len(df)} bars
@@ -145,12 +167,24 @@ Generated {datetime.now(timezone.utc):%Y-%m-%d %H:%M UTC}. Data: {len(df)} bars
 ## Full-window model
 - Purged walk-forward AUC: **{res.auc:.4f}** (folds {[round(a, 3) for a in res.auc_by_fold]})
 - Features kept by relevance: {len(res.kept_features)} / {len(X.columns)}
-- Family importance (gain): {{k: int(v) for k, v in fam_imp.items()} if len(fam_imp) else "n/a"}
+- Family importance (gain): {fam_dict}
 
 ## Held-out backtest (second half of OOS, net of costs)
 {json.dumps(bt.summary(), indent=2)}
 
 Thresholds (chosen on first OOS half only): CALL >= {call_th:.2f}, PUT <= {put_th:.2f}.
+
+## Recursive error-boosted refit (validation-early-stopped)
+Validation AUC per round: {[round(h, 4) for h in rec.history]} — kept round
+{rec.best_round}. Recursion stops when validation stops improving; training
+error is never the stop criterion (that would just memorise the past).
+
+## RL agent (contextual Q-learning, reward = net R, punishment = losses)
+State = (model-probability bin, trend regime, volatility bin); actions
+CALL/PUT/FLAT; trained by replaying past folds until the Q-table is stable
+(fold epochs: {conv}, * = converged), then evaluated on the same held-out
+half as the threshold policy:
+{json.dumps(bt_rl.summary(), indent=2)}
 
 ## MQL5 export
 - Distilled logistic (12 portable features) walk-forward AUC: **{dm.wf_auc:.4f}**

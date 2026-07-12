@@ -10,7 +10,11 @@
 | 5 — MQL5 generator | ✅ done | `tests/test_mql5.py` 3/3; EA renders with measured distilled AUC |
 | 6 — end-to-end on 2 exchanges + report | ✅ done | Coinbase BTC-USD + Bitstamp ETH-USD, `reports/RESEARCH_SUMMARY.md` |
 
-Full suite: **32/32 passed**. Key findings from the two-exchange runs are in
+| 7 — pattern benchmark ≥95%/pattern | ✅ done | `reports/PATTERN_BENCH.md`: mean 98.3%, min 95%, regression-tested |
+| 8 — time-series models (AR + causal HMM) | ✅ done | `tests/test_timeseries.py` (incl. causality tests) |
+| 9 — RL agent + recursive refit | ✅ done | `tests/test_rl.py`; integrated in `pipeline/run.py` steps 3b/4b |
+
+Key findings from the two-exchange runs are in
 `reports/RESEARCH_SUMMARY.md`: market structure dominates on both
 instruments, candle patterns are near-worthless, the useful metric mix
 shifts per window/instrument, and no cost-surviving edge was found on
