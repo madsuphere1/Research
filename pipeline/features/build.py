@@ -13,6 +13,7 @@ from . import (
     sessions,
     smc,
     support_resistance,
+    timeseries,
     trend,
     volatility,
     volume,
@@ -29,6 +30,7 @@ FEATURE_GROUPS = {
     "momentum": momentum.compute,
     "support_resistance": support_resistance.compute,
     "sessions": sessions.compute,
+    "timeseries": timeseries.compute,
     "options": options_stub.compute,
 }
 
