@@ -1,0 +1,6 @@
+window,bars,wf_auc,n_kept,kept_families
+lb6m_off0m,4344,0.4877,58,"cdl,mom,ms,pat,ses,smc,sr,trend,vlt,vol"
+lb6m_off6m,4416,0.592,57,"mom,ms,pat,ses,smc,sr,trend,vlt,vol"
+lb6m_off12m,4344,0.544,59,"cdl,mom,ms,pat,ses,smc,sr,trend,vlt,vol"
+lb12m_off0m,8760,0.5672,75,"cdl,mom,ms,pat,ses,smc,sr,trend,vlt,vol"
+lb12m_off6m,8760,0.5309,61,"cdl,mom,ms,pat,ses,smc,sr,trend,vlt,vol"

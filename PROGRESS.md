@@ -4,11 +4,17 @@
 |---|---|---|
 | 0 — workspace, reference clones, reading rules | ✅ done | `docs/MARKET_RULES.md`, `scripts/clone_references.sh`, 8 repos in `external/` |
 | 1 — data layer + window permutations | ✅ done | `tests/test_data.py` 6/6 passed (incl. live Coinbase + Bitstamp) |
-| 2 — feature engine | ⏳ in progress | |
-| 3 — labeling + walk-forward model + relevance | ⏳ pending | |
-| 4 — signal engine (CALL/PUT, TP/SL, RR) + backtest | ⏳ pending | |
-| 5 — MQL5 generator | ⏳ pending | |
-| 6 — end-to-end on 2 exchanges + report | ⏳ pending | |
+| 2 — feature engine | ✅ done | `tests/test_features.py` 15/15 incl. no-lookahead proof |
+| 3 — labeling + walk-forward model + relevance | ✅ done | `tests/test_model.py` 4/4 (planted signal kept & learned OOS) |
+| 4 — signal engine (CALL/PUT, TP/SL, RR) + backtest | ✅ done | `tests/test_signal.py` 4/4 (informed beats random, costs verified) |
+| 5 — MQL5 generator | ✅ done | `tests/test_mql5.py` 3/3; EA renders with measured distilled AUC |
+| 6 — end-to-end on 2 exchanges + report | ✅ done | Coinbase BTC-USD + Bitstamp ETH-USD, `reports/RESEARCH_SUMMARY.md` |
+
+Full suite: **32/32 passed**. Key findings from the two-exchange runs are in
+`reports/RESEARCH_SUMMARY.md`: market structure dominates on both
+instruments, candle patterns are near-worthless, the useful metric mix
+shifts per window/instrument, and no cost-surviving edge was found on
+crypto 1h — reported honestly in the generated EA headers.
 
 ## Notes & environment findings
 
