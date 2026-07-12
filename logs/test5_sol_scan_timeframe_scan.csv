@@ -1,0 +1,5 @@
+timeframe,bars,horizon_bars,wf_auc,folds_above_half,held_out_net_r,n_trades,p_value,error
+15m,26256,32.0,0.5088,2/4,-0.0004,596.0,0.493,
+1h,17510,24.0,0.53,4/4,0.0252,483.0,0.3653,
+6h,4384,12.0,0.5123,2/4,-0.0164,159.0,0.5549,
+1d,1461,,,,,,,not enough bars
