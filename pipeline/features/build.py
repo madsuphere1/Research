@@ -53,3 +53,24 @@ def build_features(
     if len(X) > warmup:
         X = X.iloc[warmup:]
     return X
+
+
+def build_features_cached(df: pd.DataFrame, **kw) -> pd.DataFrame:
+    """build_features with an on-disk cache keyed by the data's content hash.
+
+    The feature matrix is deterministic for a given OHLCV frame, so repeat
+    runs (simulate/match/scan/run on the same cached download) skip the
+    expensive Python loops entirely.
+    """
+    import hashlib
+    from pathlib import Path
+
+    cache_dir = Path(__file__).resolve().parents[2] / "data_cache"
+    h = hashlib.md5(pd.util.hash_pandas_object(df).values.tobytes()).hexdigest()[:16]
+    path = cache_dir / f"feat_{h}_{kw.get('warmup', 220)}.parquet"
+    if path.exists():
+        return pd.read_parquet(path)
+    X = build_features(df, **kw)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    X.to_parquet(path)
+    return X

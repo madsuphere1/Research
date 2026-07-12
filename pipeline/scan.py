@@ -21,7 +21,7 @@ import pandas as pd
 
 from .backtest import run_backtest
 from .data import load_ohlcv
-from .features import build_features
+from .features.build import build_features_cached as build_features
 from .labeling import triple_barrier
 from .model import walk_forward
 from .signal import SignalConfig, choose_thresholds, make_signals

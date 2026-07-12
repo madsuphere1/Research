@@ -32,7 +32,7 @@ import numpy as np
 import pandas as pd
 
 from .data import load_ohlcv
-from .features import build_features
+from .features.build import build_features_cached as build_features
 from .features.trend import atr
 from .labeling import triple_barrier
 from .model import walk_forward
