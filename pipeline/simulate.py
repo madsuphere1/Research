@@ -55,6 +55,51 @@ def _json_default(o):
     return str(o)
 
 
+def adaptive_proba(
+    X: pd.DataFrame,
+    lab: pd.DataFrame,
+    kept: list[str],
+    sim_start,
+    purge: int,
+    retrain_every: int,
+    train_window: int = 3000,
+    seed: int = 0,
+) -> tuple[pd.Series, int]:
+    """Online recursive correction: inside the simulated window the model is
+    refit every `retrain_every` bars on the most recent `train_window` bars
+    whose labels are RESOLVED (a label at bar i is only known once its
+    barrier resolves, hence the purge). The rolling window is the point:
+    when the market's behaviour flips mid-window, recent evidence must
+    outweigh stale history or the model never corrects itself. Strictly
+    causal; fresh per test — nothing is loaded from previous runs."""
+    import lightgbm as lgb
+
+    from .model import LGB_PARAMS
+
+    idx = X.index
+    proba = pd.Series(np.nan, index=idx)
+    sim_pos = np.where(idx >= sim_start)[0]
+    if len(sim_pos) == 0:
+        return proba, 0
+    y = (lab["label"] == 1).astype(int)
+    labeled = lab["label"].notna().values
+    n, pos_ = len(idx), int(sim_pos[0])
+    n_retrains = 0
+    while pos_ < n:
+        tr_end = pos_ - purge
+        tr_lo = max(0, tr_end - train_window)
+        if tr_end - tr_lo >= 300 and labeled[tr_lo:tr_end].sum() >= 300:
+            sl = slice(tr_lo, tr_end)
+            mask = labeled[sl]
+            m = lgb.LGBMClassifier(**{**LGB_PARAMS, "random_state": seed})
+            m.fit(X[kept].iloc[sl][mask], y.iloc[sl][mask])
+            hi = min(pos_ + retrain_every, n)
+            proba.iloc[pos_:hi] = m.predict_proba(X[kept].iloc[pos_:hi])[:, 1]
+            n_retrains += 1
+        pos_ += retrain_every
+    return proba, n_retrains
+
+
 def simulate_dollars(
     df: pd.DataFrame,
     signals: pd.DataFrame,
@@ -63,9 +108,25 @@ def simulate_dollars(
     risk_pct: float,
     horizon: int,
     cost_r: float,
+    breaker_lookback: int = 10,
+    breaker_stop_r: float = -4.0,
+    cooldown_bars: int | None = None,
 ) -> tuple[dict, pd.DataFrame]:
     """Dollar-accounted event simulation: next-bar-open entry, SL-first tie
-    handling, one position at a time, risk-% sizing with leverage cap."""
+    handling, one position at a time, risk-% sizing with leverage cap.
+
+    Circuit breaker ("stop when the prediction is wrong"): if the last
+    `breaker_lookback` trades sum to <= `breaker_stop_r` in net R, trading
+    pauses for `cooldown_bars` bars (default 5x horizon), then resumes.
+    Set breaker_lookback=0 to disable."""
+    from collections import deque
+
+    cooldown_bars = cooldown_bars if cooldown_bars is not None else horizon * 5
+    recent: deque = deque(maxlen=breaker_lookback or 1)
+    paused_until = -1
+    breaker_trips = 0
+    skipped_paused = 0
+
     o, h, l, c = df.open.values, df.high.values, df.low.values, df.close.values
     pos = {ts: i for i, ts in enumerate(df.index)}
     balance = balance0
@@ -75,6 +136,9 @@ def simulate_dollars(
     recs = []
     for ts, row in signals[signals.side != 0].iterrows():
         i = pos[ts]
+        if i < paused_until:
+            skipped_paused += 1
+            continue
         if i <= busy_until or i + 1 >= len(df) or balance <= 0:
             continue
         entry_i = i + 1
@@ -112,6 +176,12 @@ def simulate_dollars(
         recs.append({"time": ts, "side": side, "entry": entry, "qty": qty,
                      "r": r, "pnl": round(pnl, 2), "balance": round(balance, 2)})
         busy_until = exit_i
+        if breaker_lookback:
+            recent.append(r - cost_r)
+            if len(recent) == breaker_lookback and sum(recent) <= breaker_stop_r:
+                paused_until = exit_i + cooldown_bars
+                breaker_trips += 1
+                recent.clear()
     trades = pd.DataFrame(recs)
     summary = {
         "final_balance": round(balance, 2),
@@ -120,6 +190,8 @@ def simulate_dollars(
         "win_rate": round(float((trades.pnl > 0).mean()), 4) if len(trades) else 0.0,
         "max_drawdown_pct": round(max_dd * 100, 2),
         "busted": bool(balance <= 0),
+        "breaker_trips": breaker_trips,
+        "signals_skipped_while_paused": skipped_paused,
     }
     return summary, trades
 
@@ -141,6 +213,16 @@ def main(argv=None):
     ap.add_argument("--cost-r", type=float, default=0.05)
     ap.add_argument("--test-name", default="test")
     ap.add_argument("--prompt", default="", help="the original test prompt, stored in the log")
+    ap.add_argument("--retrain-every", type=int, default=0,
+                    help="bars between in-window model retrains (0 = auto: 5x horizon)")
+    ap.add_argument("--train-window", type=int, default=3000,
+                    help="rolling training window (bars) for in-window retrains")
+    ap.add_argument("--static", action="store_true",
+                    help="disable in-window retraining (pre-window model only)")
+    ap.add_argument("--breaker-lookback", type=int, default=10,
+                    help="trades in the circuit-breaker window (0 disables)")
+    ap.add_argument("--breaker-stop-r", type=float, default=-4.0,
+                    help="pause trading when last lookback trades sum <= this net R")
     args = ap.parse_args(argv)
 
     # need training history before the simulated window: fetch 2x the span (min 2y)
@@ -167,12 +249,25 @@ def main(argv=None):
     call_th, put_th = choose_thresholds(pre, lab["r_long"], rr=args.rr, cost_r=args.cost_r)
     cfg = SignalConfig(rr=args.rr, sl_atr=args.sl_atr, call_th=call_th,
                        put_th=put_th, cost_r=args.cost_r)
-    sim_proba = res.proba[res.proba.index >= sim_start]
+    retrain_every = args.retrain_every or 5 * args.horizon
+    if args.static:
+        sim_proba = res.proba[res.proba.index >= sim_start]
+        n_retrains = 0
+    else:
+        # online recursive correction: refit inside the window on resolved bars
+        sim_proba_full, n_retrains = adaptive_proba(
+            X, lab, res.kept_features, sim_start, purge=args.horizon,
+            retrain_every=retrain_every, train_window=args.train_window,
+        )
+        sim_proba = sim_proba_full[sim_proba_full.index >= sim_start]
+        print(f"      in-window retrains: {n_retrains} (every {retrain_every} bars)")
     sig_th = make_signals(df, sim_proba, cfg)
 
-    regime = X["trend_regime"].reindex(res.proba.index)
-    volf = X["vlt_atr_pct"].reindex(res.proba.index)
-    states_all = build_states(res.proba.fillna(0.5), regime, volf)
+    proba_combined = res.proba.copy()
+    proba_combined.loc[sim_proba.index] = sim_proba
+    regime = X["trend_regime"].reindex(proba_combined.index)
+    volf = X["vlt_atr_pct"].reindex(proba_combined.index)
+    states_all = build_states(proba_combined.fillna(0.5), regime, volf)
     rew = rewards_frame(lab["r_long"].reindex(states_all.index), args.rr, args.cost_r)
     pre_mask = (states_all.index < sim_start) & res.proba.notna()
     agent = QAgent(seed=0).fit(states_all[pre_mask].values,
@@ -183,11 +278,13 @@ def main(argv=None):
     ).where(sim_proba.notna(), 0.0)
     sig_rl = signals_from_actions(df, rl_actions, cfg)
 
-    print("[4/5] dollar simulation")
+    print("[4/5] dollar simulation (circuit breaker: "
+          f"{args.breaker_lookback}-trade window, stop at {args.breaker_stop_r}R)")
+    brk = dict(breaker_lookback=args.breaker_lookback, breaker_stop_r=args.breaker_stop_r)
     sum_th, tr_th = simulate_dollars(df, sig_th, args.balance, args.leverage,
-                                     args.risk_pct, args.horizon, args.cost_r)
+                                     args.risk_pct, args.horizon, args.cost_r, **brk)
     sum_rl, tr_rl = simulate_dollars(df, sig_rl, args.balance, args.leverage,
-                                     args.risk_pct, args.horizon, args.cost_r)
+                                     args.risk_pct, args.horizon, args.cost_r, **brk)
     sim_px = df.close[df.index >= sim_start]
     bh_final = args.balance * float(sim_px.iloc[-1] / sim_px.iloc[0])
     bh = {"final_balance": round(bh_final, 2),
@@ -204,6 +301,15 @@ def main(argv=None):
                    "bars": int((df.index >= sim_start).sum())},
         "model": {"wf_auc": round(res.auc, 4), "call_th": call_th, "put_th": put_th,
                   "rl_converged": agent.converged, "rl_epochs": agent.epochs_run},
+        "adaptation": {
+            "fresh_model_this_test": True,   # nothing loaded from previous tests
+            "in_window_retraining": not args.static,
+            "retrain_every_bars": retrain_every if not args.static else None,
+            "rolling_train_window_bars": args.train_window,
+            "n_retrains": n_retrains,
+            "circuit_breaker": {"lookback_trades": args.breaker_lookback,
+                                "stop_at_net_r": args.breaker_stop_r},
+        },
         "results": {"threshold_policy": sum_th, "rl_policy": sum_rl, "buy_and_hold": bh},
         "honesty": "OOS walk-forward predictions; thresholds+RL fitted pre-window only; "
                    "costs included; historical replay, not a forecast.",
