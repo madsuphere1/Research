@@ -30,8 +30,18 @@ python -m pipeline.match --provider coinbase --symbol BTC-USD \
 
 Honesty invariants (enforced in code, never to be weakened):
 predictions inside a simulated window are walk-forward out-of-sample;
-thresholds and the RL policy are fitted only on pre-window data; costs are
-always included; ties resolve SL-first; entries fill at next bar open.
+every policy's calibration is fitted only on pre-window data **from its
+own probability source** (test 9 lesson: cutoffs calibrated on one model's
+distribution must never filter another model's output); costs are always
+included; ties resolve SL-first; entries fill at next bar open.
+
+**Where live correction is used (evidence-based, since test 10):** the
+simulator runs three policies side by side — `threshold_static` (static
+model + static-fitted cutoffs), `threshold_adaptive_recalibrated`
+(rolling-retrained model + cutoffs fitted on a pre-window segment of
+*adaptive* predictions), and `rl_adaptive` (RL states over the
+live-corrected probabilities — the pairing that improved every instrument
+tried). The circuit breaker guards all three.
 
 ## Ledger (as of 2026-07-12)
 
@@ -46,6 +56,7 @@ always included; ties resolve SL-first; entries fill at next bar open.
 | 7 | "Gold 2 months, which candle size, 6k at 1:10" | XAUUSD scan + $6k 6h sim | 6h most predictive (AUC 0.550, 4/4) but no TF beats costs; sim $6,073 (+1.2%) vs $5,238 B&H |
 | 8 | "Why didn't you stop the trade / recursively correct the prediction?" | Test 7 rerun, live correction ON | Threshold $6,097 (+1.6%, max DD 5.6%→3.2%); **RL −8.7% → +0.8%** — breaker tripped once, skipped 70 signals |
 | 9 | "Try SOL with this approach" | Test 6 rerun, live correction ON | Split verdict: **RL +7.4% → +20.1%** ($7,206, best run yet) but threshold +21.7% → **−19.0%** — thresholds calibrated on the static model's probabilities don't fit the retrained model's distribution (known issue below); breaker capped the damage (5 trips, 376 signals skipped) |
+| 10 | "Now you know where to use live correction — update code accordingly" | SOL rerun, three paired policies | **threshold_static restored: +19.4%**; threshold_adaptive recalibrated −19.0% → −4.4% (better but still worst on SOL); rl_adaptive +3.5% — the drop from test 9's +20.1% came only from shifting the retrain phase, so RL-adaptive results are **unstable across retrain timing**; all three beat B&H (−18.1%) |
 
 ## What the ledger shows so far
 
@@ -56,6 +67,14 @@ always included; ties resolve SL-first; entries fill at next bar open.
 3. **Timeframe is per-instrument**: BTC 6h, SOL 1h, gold 6h-ish.
 4. Two-month windows are weather, not climate — judge the system on the
    whole ledger, not one row.
+5. **Live correction is instrument-dependent** (tests 8–10): it rescued
+   gold's RL policy, but on SOL the static threshold policy remains best
+   and the rolling-retrained model underperforms for threshold filtering.
+   RL-adaptive returns vary a lot with retrain timing (+20.1% vs +3.5% for
+   the same window) — treat single adaptive runs with extra suspicion.
+   This is why the simulator reports all three policies side by side:
+   the per-instrument evidence accumulates in this ledger instead of being
+   decided by one lucky configuration.
 
 ## Changes made because of testing (chronological)
 

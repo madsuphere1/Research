@@ -245,23 +245,45 @@ def main(argv=None):
     if len(pre) < 500:
         raise SystemExit("not enough pre-window OOS data to fit thresholds honestly")
 
-    print("[3/5] thresholds + RL agent fitted on pre-window OOS only")
+    print("[3/5] policies — each proba source paired with its OWN calibration")
+    # Ledger evidence (tests 6/8/9): live correction helps the RL policy on
+    # every instrument tried, but thresholds calibrated on one model's
+    # probability distribution must never filter another model's output.
+    # So: the static threshold policy stays fully static, and the adaptive
+    # threshold policy is recalibrated on ADAPTIVE pre-window predictions.
     call_th, put_th = choose_thresholds(pre, lab["r_long"], rr=args.rr, cost_r=args.cost_r)
     cfg = SignalConfig(rr=args.rr, sl_atr=args.sl_atr, call_th=call_th,
                        put_th=put_th, cost_r=args.cost_r)
+    sig_th_static = make_signals(df, res.proba[res.proba.index >= sim_start], cfg)
+
     retrain_every = args.retrain_every or 5 * args.horizon
     if args.static:
         sim_proba = res.proba[res.proba.index >= sim_start]
         n_retrains = 0
+        call_a, put_a = call_th, put_th
+        sig_th_adapt = sig_th_static
     else:
-        # online recursive correction: refit inside the window on resolved bars
+        # start the rolling-retrain series one window-length BEFORE the sim
+        # window: that pre-segment is out-of-sample for the retrained models
+        # and is what the adaptive thresholds are calibrated on.
+        cal_start = sim_start - (df.index.max() - sim_start)
         sim_proba_full, n_retrains = adaptive_proba(
-            X, lab, res.kept_features, sim_start, purge=args.horizon,
+            X, lab, res.kept_features, cal_start, purge=args.horizon,
             retrain_every=retrain_every, train_window=args.train_window,
         )
         sim_proba = sim_proba_full[sim_proba_full.index >= sim_start]
-        print(f"      in-window retrains: {n_retrains} (every {retrain_every} bars)")
-    sig_th = make_signals(df, sim_proba, cfg)
+        cal_proba = sim_proba_full[
+            (sim_proba_full.index >= cal_start) & (sim_proba_full.index < sim_start)
+        ].dropna()
+        print(f"      retrains: {n_retrains} (every {retrain_every} bars; "
+              f"calibration segment {cal_start:%F} .. {sim_start:%F}, {len(cal_proba)} preds)")
+        call_a, put_a = choose_thresholds(cal_proba, lab["r_long"],
+                                          rr=args.rr, cost_r=args.cost_r)
+        cfg_a = SignalConfig(rr=args.rr, sl_atr=args.sl_atr, call_th=call_a,
+                             put_th=put_a, cost_r=args.cost_r)
+        sig_th_adapt = make_signals(df, sim_proba, cfg_a)
+        print(f"      static thresholds {call_th:.2f}/{put_th:.2f} | "
+              f"adaptive (recalibrated) {call_a:.2f}/{put_a:.2f}")
 
     proba_combined = pd.Series(np.nan, index=X.index)
     proba_combined.loc[res.proba.index] = res.proba
@@ -282,7 +304,9 @@ def main(argv=None):
     print("[4/5] dollar simulation (circuit breaker: "
           f"{args.breaker_lookback}-trade window, stop at {args.breaker_stop_r}R)")
     brk = dict(breaker_lookback=args.breaker_lookback, breaker_stop_r=args.breaker_stop_r)
-    sum_th, tr_th = simulate_dollars(df, sig_th, args.balance, args.leverage,
+    sum_th, tr_th = simulate_dollars(df, sig_th_static, args.balance, args.leverage,
+                                     args.risk_pct, args.horizon, args.cost_r, **brk)
+    sum_ta, tr_ta = simulate_dollars(df, sig_th_adapt, args.balance, args.leverage,
                                      args.risk_pct, args.horizon, args.cost_r, **brk)
     sum_rl, tr_rl = simulate_dollars(df, sig_rl, args.balance, args.leverage,
                                      args.risk_pct, args.horizon, args.cost_r, **brk)
@@ -301,6 +325,7 @@ def main(argv=None):
         "window": {"start": str(sim_start), "end": str(df.index.max()),
                    "bars": int((df.index >= sim_start).sum())},
         "model": {"wf_auc": round(res.auc, 4), "call_th": call_th, "put_th": put_th,
+                  "call_th_adaptive": call_a, "put_th_adaptive": put_a,
                   "rl_converged": agent.converged, "rl_epochs": agent.epochs_run},
         "adaptation": {
             "fresh_model_this_test": True,   # nothing loaded from previous tests
@@ -311,9 +336,12 @@ def main(argv=None):
             "circuit_breaker": {"lookback_trades": args.breaker_lookback,
                                 "stop_at_net_r": args.breaker_stop_r},
         },
-        "results": {"threshold_policy": sum_th, "rl_policy": sum_rl, "buy_and_hold": bh},
-        "honesty": "OOS walk-forward predictions; thresholds+RL fitted pre-window only; "
-                   "costs included; historical replay, not a forecast.",
+        "results": {"threshold_static": sum_th,
+                    "threshold_adaptive_recalibrated": sum_ta,
+                    "rl_adaptive": sum_rl, "buy_and_hold": bh},
+        "honesty": "OOS walk-forward predictions; each policy's calibration fitted "
+                   "pre-window on ITS OWN proba source; costs included; "
+                   "historical replay, not a forecast.",
     }
 
     print("[5/5] logging")
@@ -340,17 +368,20 @@ def main(argv=None):
 
 | Policy | Final balance | Return | Trades | Win rate | Max DD |
 |---|---|---|---|---|---|
-| Threshold (CALL>={call_th:.2f}/PUT<={put_th:.2f}) | {sum_th['final_balance']:,.2f} | {sum_th['return_pct']}% | {sum_th['n_trades']} | {sum_th['win_rate']:.1%} | {sum_th['max_drawdown_pct']}% |
-| RL agent (converged={agent.converged}) | {sum_rl['final_balance']:,.2f} | {sum_rl['return_pct']}% | {sum_rl['n_trades']} | {sum_rl['win_rate']:.1%} | {sum_rl['max_drawdown_pct']}% |
+| Threshold static (CALL>={call_th:.2f}/PUT<={put_th:.2f}) | {sum_th['final_balance']:,.2f} | {sum_th['return_pct']}% | {sum_th['n_trades']} | {sum_th['win_rate']:.1%} | {sum_th['max_drawdown_pct']}% |
+| Threshold adaptive, recalibrated (CALL>={call_a:.2f}/PUT<={put_a:.2f}) | {sum_ta['final_balance']:,.2f} | {sum_ta['return_pct']}% | {sum_ta['n_trades']} | {sum_ta['win_rate']:.1%} | {sum_ta['max_drawdown_pct']}% |
+| RL adaptive (converged={agent.converged}) | {sum_rl['final_balance']:,.2f} | {sum_rl['return_pct']}% | {sum_rl['n_trades']} | {sum_rl['win_rate']:.1%} | {sum_rl['max_drawdown_pct']}% |
 | Buy & hold | {bh['final_balance']:,.2f} | {bh['return_pct']}% | 1 | — | — |
 
-*Honesty note:* every prediction inside the window is out-of-sample
-(walk-forward); thresholds and the RL policy were fitted only on data from
-before the window; costs are included. This is a historical replay of what
-the system would have decided — not a forecast of future returns.
+*Honesty note:* every prediction inside the window is out-of-sample; each
+policy's calibration was fitted before the window on its own probability
+source (ledger lesson from test 9); costs are included. This is a
+historical replay of what the system would have decided — not a forecast.
 """)
     if len(tr_th):
         tr_th.to_csv(LOGS / f"{args.test_name}_{tag}_trades_threshold.csv", index=False)
+    if len(tr_ta):
+        tr_ta.to_csv(LOGS / f"{args.test_name}_{tag}_trades_threshold_adaptive.csv", index=False)
     if len(tr_rl):
         tr_rl.to_csv(LOGS / f"{args.test_name}_{tag}_trades_rl.csv", index=False)
     print(json.dumps(record["results"], indent=2))

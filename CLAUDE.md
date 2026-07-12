@@ -88,3 +88,11 @@ p=0.024 raw, ~0.10 after timeframe-selection correction) — needs
 confirmation on a fresh instrument/period before being believed. The
 system consistently beats buy-and-hold in falling markets and lags strong
 bull trends; policies are regime-dependent (see TESTING.md ledger).
+
+**Live correction policy (tests 8–10):** in-window rolling retraining +
+circuit breaker are default-on in `pipeline/simulate.py`. RL over adaptive
+probabilities improved every instrument tried. Threshold cutoffs must be
+calibrated on the same probability source they filter — the simulator runs
+`threshold_static`, `threshold_adaptive_recalibrated` and `rl_adaptive`
+side by side; never mix a static calibration with adaptive probabilities
+(test 9 showed that flips a +21.7% window to −19.0%).
