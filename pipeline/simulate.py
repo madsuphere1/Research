@@ -44,6 +44,17 @@ ROOT = Path(__file__).resolve().parents[1]
 LOGS = ROOT / "logs"
 
 
+def _json_default(o):
+    """numpy scalars leak into records; make json.dumps robust to them."""
+    if isinstance(o, (np.bool_,)):
+        return bool(o)
+    if isinstance(o, np.integer):
+        return int(o)
+    if isinstance(o, np.floating):
+        return float(o)
+    return str(o)
+
+
 def simulate_dollars(
     df: pd.DataFrame,
     signals: pd.DataFrame,
@@ -121,6 +132,8 @@ def main(argv=None):
     ap.add_argument("--balance", type=float, required=True)
     ap.add_argument("--leverage", type=float, default=1.0)
     ap.add_argument("--days", type=int, default=365, help="simulated period, ending now")
+    ap.add_argument("--start", default=None, help="explicit sim start date (YYYY-MM-DD); overrides --days")
+    ap.add_argument("--end", default=None, help="explicit sim end date (YYYY-MM-DD); default now")
     ap.add_argument("--risk-pct", type=float, default=1.0)
     ap.add_argument("--horizon", type=int, default=24)
     ap.add_argument("--sl-atr", type=float, default=1.5)
@@ -131,11 +144,15 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     # need training history before the simulated window: fetch 2x the span (min 2y)
-    fetch_years = max(2.0, 2 * args.days / 365.25)
+    end_dt = (datetime.fromisoformat(args.end).replace(tzinfo=timezone.utc)
+              if args.end else datetime.now(timezone.utc))
+    span_days = ((end_dt - datetime.fromisoformat(args.start).replace(tzinfo=timezone.utc)).days
+                 if args.start else args.days)
+    fetch_years = max(2.0, 2 * span_days / 365.25)
     tag = f"{args.provider}_{args.symbol.replace('/', '').replace('-', '')}_{args.timeframe}"
-    print(f"[1/5] loading {fetch_years:.1f}y of {args.provider}:{args.symbol} {args.timeframe}")
-    df = load_ohlcv(args.provider, args.symbol, args.timeframe, years=fetch_years)
-    sim_start = df.index.max() - pd.Timedelta(days=args.days)
+    print(f"[1/5] loading {fetch_years:.1f}y of {args.provider}:{args.symbol} {args.timeframe} ending {end_dt:%F}")
+    df = load_ohlcv(args.provider, args.symbol, args.timeframe, years=fetch_years, end=end_dt)
+    sim_start = df.index.max() - pd.Timedelta(days=span_days)
     print(f"      {len(df)} bars; simulated window {sim_start:%F} .. {df.index.max():%F}")
 
     print("[2/5] features + walk-forward model (predictions in the window are OOS)")
