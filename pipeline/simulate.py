@@ -108,7 +108,7 @@ def simulate_dollars(
         "n_trades": len(trades),
         "win_rate": round(float((trades.pnl > 0).mean()), 4) if len(trades) else 0.0,
         "max_drawdown_pct": round(max_dd * 100, 2),
-        "busted": balance <= 0,
+        "busted": bool(balance <= 0),
     }
     return summary, trades
 
@@ -195,7 +195,7 @@ def main(argv=None):
     print("[5/5] logging")
     LOGS.mkdir(exist_ok=True)
     with open(LOGS / "test_runs.jsonl", "a") as f:
-        f.write(json.dumps(record) + "\n")
+        f.write(json.dumps(record, default=lambda o: o.item() if hasattr(o, "item") else str(o)) + "\n")
     md_path = LOGS / f"{args.test_name}_{tag}.md"
     md_path.write_text(f"""# Test run: {args.test_name} ({tag})
 
