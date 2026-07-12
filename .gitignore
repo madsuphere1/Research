@@ -1,0 +1,11 @@
+# third-party reference clones (re-fetch with scripts/clone_references.sh)
+external/
+
+# run artifacts & data cache (summary reports in reports/ are committed)
+outputs/
+data_cache/
+
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
